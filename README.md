@@ -1,2 +1,2 @@
 # robust_transformer
-Implementation of the robust transformer paper.
+Implementation of the robust transformer paper in submission to ICLR 2023. Code coming soon...
