@@ -40,8 +40,7 @@ class KdeAttention(nn.Module):
         v = v.permute(2, 0, 1, 3)
 
         k = F.normalize(k, dim=-1)
-        diff = q[:, None, :, :, :] - k[None, :, :, :, :]
-        diff_norm = torch.linalg.norm(diff, dim=-1, ord=2) ** 2
+        diff_norm = torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         scaled_norm = -self.scale * diff_norm
         attn_prob = torch.exp(scaled_norm - torch.logsumexp(scaled_norm, dim=1, keepdim=True))
         attn_prob = self.attn_drop(attn_prob)
@@ -160,8 +159,7 @@ class RobustAttention(nn.Module):
 
     def compute_weights(self, w_init, x):
         obj_1 = torch.ones((x.size(0), x.size(1), x.size(2)), device=f'cuda:{torch.cuda.current_device()}')
-        diff = x[:, None, :, :, :] - x[None, :, :, :, :]
-        diff_norm = torch.linalg.norm(diff, dim=-1, ord=2) ** 2
+        diff_norm = torch.square(torch.cdist(x.transpose(0, 2), x.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         rbf = torch.exp(-self.scale * diff_norm)
 
         obj_2 = torch.einsum('ij,ijbn->ibn', (w_init, rbf))
@@ -184,8 +182,7 @@ class RobustAttention(nn.Module):
         v = v.permute(2, 0, 1, 3)
 
         k = F.normalize(k, dim=-1)
-        diff = q[:, None, :, :, :] - k[None, :, :, :, :]
-        diff_norm = torch.linalg.norm(diff, dim=-1, ord=2) ** 2
+        diff_norm = torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         weights = F.normalize(torch.ones((N, N)).type(torch.FloatTensor), dim=1, p=1.0)
         weights = weights.to(device=f'cuda:{torch.cuda.current_device()}')
         kv = torch.cat((k, v), -1)
