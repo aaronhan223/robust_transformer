@@ -168,8 +168,7 @@ def get_args_parser():
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
     
     # additional parameters
-    parser.add_argument('--use_wandb', action='store_false',
-                    help='use wandb.')
+    parser.add_argument('--use_wandb', default=1, help='use wandb.')
     parser.add_argument('--project_name', default=None, type=str)
     parser.add_argument('--job_name', type=str, default=None,
                     help='job name for wandb.')
