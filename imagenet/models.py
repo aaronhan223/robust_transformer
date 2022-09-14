@@ -38,16 +38,13 @@ class KdeAttention(nn.Module):
 
         q = q.permute(2, 0, 1, 3)
         k = k.permute(2, 0, 1, 3)
-        v = v.permute(2, 0, 1, 3)
-
         k = F.normalize(k, dim=-1)
-        diff_norm = torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
-        scaled_norm = -self.scale * diff_norm
-        attn_prob = torch.exp(scaled_norm - torch.logsumexp(scaled_norm, dim=1, keepdim=True))
-        attn_prob = self.attn_drop(attn_prob)
+        scaled_norm = -self.scale * torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
+        attn = torch.exp(scaled_norm - torch.logsumexp(scaled_norm, dim=1, keepdim=True))
+        attn = attn.permute(2, 3, 0, 1)
+        attn = self.attn_drop(attn)
 
-        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, v))
-        x = attn_vec.contiguous().view(attn_vec.size(1), attn_vec.size(0), C)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -189,22 +186,20 @@ class RobustAttention(nn.Module):
 
         q = q.permute(2, 0, 1, 3)
         k = k.permute(2, 0, 1, 3)
-        v = v.permute(2, 0, 1, 3)
-
         k = F.normalize(k, dim=-1)
-        diff_norm = torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
+
         weights = F.normalize(torch.ones((N, N)).type(torch.FloatTensor), dim=1, p=1.0)
         weights = weights.to(device=f'cuda:{torch.cuda.current_device()}')
-        kv = torch.cat((k, v), -1)
+        kv = torch.cat((k, v.permute(2, 0, 1, 3)), -1)
         kv_weights = self.compute_weights(weights, kv)[None, :, :, :]
         k_weights = self.compute_weights(weights, k)[None, :, :, :]
-        scaled_norm = -self.scale * diff_norm
+        scaled_norm = -self.scale * torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         log_result = kv_weights + scaled_norm - torch.logsumexp(k_weights + scaled_norm, dim=1, keepdim=True)
-        attn_prob = torch.exp(log_result)
-        attn_prob = self.attn_drop(attn_prob)
+        attn = torch.exp(log_result)
+        attn = attn.permute(2, 3, 0, 1)
+        attn = self.attn_drop(attn)
 
-        attn_vec = torch.einsum('ijbn,jbnd->ibnd', (attn_prob, v))
-        x = attn_vec.contiguous().view(attn_vec.size(1), attn_vec.size(0), C)
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
