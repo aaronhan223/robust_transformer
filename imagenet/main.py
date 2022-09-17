@@ -146,7 +146,7 @@ def get_args_parser():
                         type=str, help='semantic granularity')
     parser.add_argument('--attack', default='none', choices=['pgd', 'fgm', 'sld', 'noise', 'cw', 'spsa', 'none'],
                         type=str, help='Type pf attack method.')
-    parser.add_argument('--badsamples', default=0.6, type=float, help='Percentage of bad data.')
+    parser.add_argument('--eps', default=0.03, type=float, help='Purtabation budget')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -403,7 +403,10 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device, attack=args.attack, bad_samples=args.badsamples)
+        test_stats = evaluate(data_loader_val, model, device, attack=args.attack, eps=args.eps)
+        if args.output_dir and utils.is_main_process():
+            with (output_dir / f"attack_result_{args.attack}_{args.eps}.txt").open("a") as f:
+                f.write(json.dumps(test_stats) + "\n")
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
 

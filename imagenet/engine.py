@@ -71,7 +71,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
 
 
 # @torch.no_grad()
-def evaluate(data_loader, model, device, attack=None, bad_samples=0.6):
+def evaluate(data_loader, model, device, attack='none', eps=0.03):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -85,25 +85,22 @@ def evaluate(data_loader, model, device, attack=None, bad_samples=0.6):
         target = target.to(device, non_blocking=True)
         bs = images.shape[0]
         if attack != 'none':
-            bad_indices = np.random.choice(bs, int(bs*bad_samples), replace=False)
+            # bad_indices = np.random.choice(bs, bs, replace=False)
             if attack == 'fgm':
-                att_images = fast_gradient_method(model, images[bad_indices], 0.3, np.inf)
+                images = fast_gradient_method(model, images, eps, np.inf)
             elif attack == 'pgd':
-                att_images = projected_gradient_descent(model, images[bad_indices], 0.3, 0.01, 40, np.inf)
+                images = projected_gradient_descent(model, images, eps, 0.01, 40, np.inf)
             elif attack == 'sld':
-                att_images = sparse_l1_descent(model, images[bad_indices])
+                images = sparse_l1_descent(model, images)
             elif attack == 'noise':
-                att_images = noise(images[bad_indices])
+                images = noise(images)
             elif attack == 'cw':
-                att_images = carlini_wagner_l2(model, images[bad_indices], 1000, y=target[bad_indices])
+                images = carlini_wagner_l2(model, images, 1000, y=target)
             elif attack == 'spsa':
-                att_images = spsa(model, images[bad_indices], 0.3, 40)
+                images = spsa(model, images, eps, 40)
             elif attack == 'hsja':
                 # can do targeted attack
-                att_images = hop_skip_jump_attack(model, images[bad_indices], np.inf)
-
-            images[bad_indices] = att_images
-
+                images = hop_skip_jump_attack(model, images, np.inf)
         # compute output
         with torch.cuda.amp.autocast():
             output = model(images)
@@ -116,8 +113,8 @@ def evaluate(data_loader, model, device, attack=None, bad_samples=0.6):
         metric_logger.meters['acc5'].update(acc5.item(), n=bs)
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
-    if attack is not None:
-        print(f'Evaluating attack method {attack}:')
+    if attack != 'none':
+        print(f'Evaluating attack method {attack} with perturbation budget {eps}:')
     print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
           .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
 
