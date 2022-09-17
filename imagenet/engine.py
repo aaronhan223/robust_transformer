@@ -71,7 +71,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
 
 
 # @torch.no_grad()
-def evaluate(data_loader, model, device, attack=None):
+def evaluate(data_loader, model, device, attack=None, bad_samples=0.6):
     criterion = torch.nn.CrossEntropyLoss()
 
     metric_logger = utils.MetricLogger(delimiter="  ")
@@ -85,7 +85,7 @@ def evaluate(data_loader, model, device, attack=None):
         target = target.to(device, non_blocking=True)
         bs = images.shape[0]
         if attack is not None:
-            bad_indices = np.random.choice(bs, int(bs*0.6), replace=False)
+            bad_indices = np.random.choice(bs, int(bs*bad_samples), replace=False)
             if attack == 'fgm':
                 att_images = fast_gradient_method(model, images[bad_indices], 0.3, np.inf)
             elif attack == 'pgd':
@@ -117,7 +117,7 @@ def evaluate(data_loader, model, device, attack=None):
     # gather the stats from all processes
     metric_logger.synchronize_between_processes()
     if attack is not None:
-        print(f'Attack method {attack}:')
+        print(f'Evaluating attack method {attack}:')
     print('* Acc@1 {top1.global_avg:.3f} Acc@5 {top5.global_avg:.3f} loss {losses.global_avg:.3f}'
           .format(top1=metric_logger.acc1, top5=metric_logger.acc5, losses=metric_logger.loss))
 

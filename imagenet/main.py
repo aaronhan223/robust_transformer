@@ -144,6 +144,9 @@ def get_args_parser():
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
+    parser.add_argument('--attack', default='pgd', choices=['pgd', 'fgm', 'sld', 'noise', 'cw', 'spsa'],
+                        type=str, help='Type pf attack method.')
+    parser.add_argument('--badsamples', default=0.6, type=float, help='Percentage of bad data.')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -153,7 +156,7 @@ def get_args_parser():
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
-    parser.add_argument('--eval', default=1, help='Perform evaluation only')
+    parser.add_argument('--eval', default=0, help='Perform evaluation only')
     parser.add_argument('--dist-eval', action='store_true', default=False, help='Enabling distributed evaluation')
     parser.add_argument('--num_workers', default=10, type=int)
     parser.add_argument('--pin-mem', action='store_true',
@@ -400,7 +403,7 @@ def main(args):
                 loss_scaler.load_state_dict(checkpoint['scaler'])
 
     if args.eval:
-        test_stats = evaluate(data_loader_val, model, device, attack='cw')
+        test_stats = evaluate(data_loader_val, model, device, attack=args.attack, bad_samples=args.badsamples)
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
 
