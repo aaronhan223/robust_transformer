@@ -84,7 +84,7 @@ def evaluate(data_loader, model, device, attack=None, bad_samples=0.6):
         images = images.to(device, non_blocking=True)
         target = target.to(device, non_blocking=True)
         bs = images.shape[0]
-        if attack is not None:
+        if attack != 'none':
             bad_indices = np.random.choice(bs, int(bs*bad_samples), replace=False)
             if attack == 'fgm':
                 att_images = fast_gradient_method(model, images[bad_indices], 0.3, np.inf)

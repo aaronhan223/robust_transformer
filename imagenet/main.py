@@ -144,8 +144,8 @@ def get_args_parser():
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--attack', default=None, choices=['pgd', 'fgm', 'sld', 'noise', 'cw', 'spsa', None],
-                        help='Type pf attack method.')
+    parser.add_argument('--attack', default='none', choices=['pgd', 'fgm', 'sld', 'noise', 'cw', 'spsa', 'none'],
+                        type=str, help='Type pf attack method.')
     parser.add_argument('--badsamples', default=0.6, type=float, help='Percentage of bad data.')
 
     parser.add_argument('--output_dir', default='',
