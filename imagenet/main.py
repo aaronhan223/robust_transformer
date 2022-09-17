@@ -1,5 +1,5 @@
 import argparse
-import datetime
+from datetime import datetime, timedelta
 import pdb
 import numpy as np
 import time
@@ -144,8 +144,8 @@ def get_args_parser():
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
-    parser.add_argument('--attack', default='pgd', choices=['pgd', 'fgm', 'sld', 'noise', 'cw', 'spsa'],
-                        type=str, help='Type pf attack method.')
+    parser.add_argument('--attack', default=None, choices=['pgd', 'fgm', 'sld', 'noise', 'cw', 'spsa', None],
+                        help='Type pf attack method.')
     parser.add_argument('--badsamples', default=0.6, type=float, help='Percentage of bad data.')
 
     parser.add_argument('--output_dir', default='',
@@ -458,7 +458,7 @@ def main(args):
         print('\nTraining time after %i epoch = %f seconds\n'%(count_epoch, time.time() - start_time))
 
     total_time = time.time() - start_time
-    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
+    total_time_str = str(timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
     if use_wandb:
         wandb.log({'test_acc':max_accuracy})
