@@ -95,7 +95,7 @@ def evaluate(data_loader, model, device, attack='none', eps=0.03):
             elif attack == 'noise':
                 images = noise(images)
             elif attack == 'cw':
-                images = carlini_wagner_l2(model, images, 1000, y=target)
+                images = carlini_wagner_l2(model, images, 1000, confidence=eps)
             elif attack == 'spsa':
                 images = spsa(model, images, eps, 40)
             elif attack == 'hsja':
