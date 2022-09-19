@@ -409,7 +409,7 @@ def main(args):
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device, attack=args.attack, eps=args.eps)
         if args.output_dir and utils.is_main_process():
-            with (output_dir / f"attack_result_{args.attack}_{args.eps}.txt").open("a") as f:
+            with (output_dir / f"new_attack_{args.attack}_{args.eps}.txt").open("a") as f:
                 f.write(json.dumps(test_stats) + "\n")
         print(f"Accuracy of the network on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
         return
