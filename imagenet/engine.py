@@ -103,8 +103,8 @@ def evaluate(data_loader, model, device, attack='none', eps=0.03):
                 images = hop_skip_jump_attack(model, images, np.inf)
         # compute output
         with torch.cuda.amp.autocast():
-            images.requires_grad = False
-            output = model(images)
+            with torch.no_grad():
+                output = model(images)
             loss = criterion(output, target)
 
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
