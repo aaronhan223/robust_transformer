@@ -217,6 +217,7 @@ def main(args):
 
     if not args.eval:
         dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
+    args.nb_classes = 1000
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
     if True:  # args.distributed:
