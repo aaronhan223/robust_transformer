@@ -33,3 +33,7 @@ An example of evaluating robust model using pgd attack with different magnitude.
 ```bash
 ./run_pgd.sh
 ```
+
+### Link to Test Data:
+
+ImageNet: https://drive.google.com/file/d/1ZhpoYRE6swyjTNrnykCLagSHtWIUNWJh/view?usp=sharing
