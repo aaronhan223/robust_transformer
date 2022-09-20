@@ -89,7 +89,7 @@ def evaluate(data_loader, model, device, attack='none', eps=0.03):
             if attack == 'fgm':
                 images = fast_gradient_method(model, images, eps, np.inf)
             elif attack == 'pgd':
-                images = projected_gradient_descent(model, images, eps, 0.01, 40, np.inf)
+                images = projected_gradient_descent(model, images, eps, 0.15 * eps, 20, np.inf)
             elif attack == 'sld':
                 images = sparse_l1_descent(model, images)
             elif attack == 'noise':
