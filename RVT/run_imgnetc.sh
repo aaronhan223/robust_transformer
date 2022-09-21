@@ -1,0 +1,3 @@
+#!/bin/bash
+
+CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 --master_port=1517 --use_env main.py --model rvt_tiny --batch-size 48 --data-path /mnt/d64c1162-08cc-4571-90a3-04c60b6f6f66/xing/imagenet/imagenet --output_dir ./RVT/files_rvt --use_wandb 0 --project_name 'robust' --job_name rvt_baseline --finetune ./RVT/files_rvt/checkpoint.pth --eval 1 --inc_path /mnt/d64c1162-08cc-4571-90a3-04c60b6f6f66/xing/imagenet-c

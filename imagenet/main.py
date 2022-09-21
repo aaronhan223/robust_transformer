@@ -5,6 +5,7 @@ import numpy as np
 import time
 import torch
 import torch.backends.cudnn as cudnn
+import torchvision
 import json
 
 from pathlib import Path
@@ -157,6 +158,7 @@ def get_args_parser():
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--eval', default=0, help='Perform evaluation only')
+    parser.add_argument('--inc_path', default=None, type=str, help='imagenet-c')
     parser.add_argument('--dist-eval', default=False, help='Enabling distributed evaluation')
     parser.add_argument('--num_workers', default=10, type=int)
     parser.add_argument('--pin-mem', action='store_true',
@@ -408,6 +410,48 @@ def main(args):
 
     if args.eval:
         test_stats = evaluate(data_loader_val, model, device, attack=args.attack, eps=args.eps)
+        
+        if args.inc_path:
+            result_dict = {}
+            ce_alexnet = utils.get_ce_alexnet()
+
+            # transform for imagenet-c
+            inc_transform = torchvision.transforms.Compose([torchvision.transforms.CenterCrop(224),
+                        torchvision.transforms.ToTensor(),
+                        torchvision.transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))])
+
+            for name, path in utils.data_loaders_names.items():
+                for severity in range(1, 6):
+                    inc_dataset = torchvision.datasets.ImageFolder(os.path.join(args.inc_path, path, str(severity)), transform=inc_transform)
+                    inc_data_loader = torch.utils.data.DataLoader(
+                                    inc_dataset, batch_size=int(1.5 * args.batch_size),
+                                    num_workers=args.num_workers,
+                                    pin_memory=args.pin_mem,
+                                    drop_last=False
+                                )
+                    test_stats = evaluate(inc_data_loader, model, device)
+                    print(f"Accuracy on the {name+'({})'.format(severity)}: {test_stats['acc1']:.1f}%")
+                    result_dict[name+'({})'.format(severity)] = test_stats['acc1']
+
+            mCE = 0
+            counter = 0
+            overall_acc = 0
+            for name, path in utils.data_loaders_names.items():
+                acc_top1 = 0
+                for severity in range(1, 6):
+                    acc_top1 += result_dict[name+'({})'.format(severity)]
+                acc_top1 /= 5
+                CE = utils.get_mce_from_accuracy(acc_top1, ce_alexnet[name])
+                mCE += CE
+                overall_acc += acc_top1
+                counter += 1
+                print("{0}: Top1 accuracy {1:.2f}, CE: {2:.2f}".format(
+                        name, acc_top1, 100. * CE))
+            
+            overall_acc /= counter
+            mCE /= counter
+            print("Corruption Top1 accuracy {0:.2f}, mCE: {1:.2f}".format(overall_acc, mCE * 100.))
+        
         if args.output_dir and utils.is_main_process():
             with (output_dir / f"new_attack_{args.attack}_{args.eps}.txt").open("a") as f:
                 f.write(json.dumps(test_stats) + "\n")

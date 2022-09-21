@@ -151,6 +151,9 @@ def get_args_parser():
     parser.add_argument('--inat-category', default='name',
                         choices=['kingdom', 'phylum', 'class', 'order', 'supercategory', 'family', 'genus', 'name'],
                         type=str, help='semantic granularity')
+    parser.add_argument('--attack', default='none', choices=['pgd', 'fgm', 'sld', 'noise', 'cw', 'spsa', 'none'],
+                        type=str, help='Type pf attack method.')
+    parser.add_argument('--eps', default=0.03, type=float, help='Purtabation budget')
 
     parser.add_argument('--output_dir', default='',
                         help='path where to save, empty for no saving')
@@ -162,7 +165,7 @@ def get_args_parser():
                         help='start epoch')
 
     # eval parameters
-    parser.add_argument('--eval', action='store_true', help='Perform evaluation only')
+    parser.add_argument('--eval', default=0, help='Perform evaluation only')
     parser.add_argument('--inc_path', default=None, type=str, help='imagenet-c')
     parser.add_argument('--ina_path', default=None, type=str, help='imagenet-a')
     parser.add_argument('--inr_path', default=None, type=str, help='imagenet-r')
@@ -244,20 +247,23 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
+    if not args.eval:
+        dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
+    args.nb_classes = 1000
     dataset_val, _ = build_dataset(is_train=False, args=args)
 
     if True:  # args.distributed:
         num_tasks = utils.get_world_size()
         global_rank = utils.get_rank()
-        if args.repeated_aug:
-            sampler_train = RASampler(
-                dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-            )
-        else:
-            sampler_train = torch.utils.data.DistributedSampler(
-                dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
-            )
+        if not args.eval:
+            if args.repeated_aug:
+                sampler_train = RASampler(
+                    dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+                )
+            else:
+                sampler_train = torch.utils.data.DistributedSampler(
+                    dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
+                )
         if args.dist_eval:
             if len(dataset_val) % num_tasks != 0:
                 print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
@@ -271,13 +277,14 @@ def main(args):
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
 
-    data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=args.pin_mem,
-        drop_last=True,
-    )
+    if not args.eval:
+        data_loader_train = torch.utils.data.DataLoader(
+            dataset_train, sampler=sampler_train,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            pin_memory=args.pin_mem,
+            drop_last=True,
+        )
 
     data_loader_val = torch.utils.data.DataLoader(
         dataset_val, sampler=sampler_val,
