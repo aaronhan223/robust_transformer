@@ -21,12 +21,12 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 python ./src/train.py --cuda --data {your data dire
 
 KDE Transformer
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3 python ./src/train.py --cuda --data {your data directory}/wikitext-103/ --dataset wt103 --adaptive --n_layer 16 --d_model 128 --n_head 8 --d_head 16 --d_inner 2048 --dropout 0.1 --dropatt 0.0 --optim adam --lr 0.00025 --warmup_step 2000 --max_step 500000 --attn_type 8 --tgt_len 256 --mem_len 0 --eval_tgt_len 256 --batch_size 96 --multi_gpu --use_wandb --project_name 'mgk' --seed 1111 --job_name softmax --work_dir {your directory}
+CUDA_VISIBLE_DEVICES=0,1,2,3 python ./src/train.py --cuda --data {your data directory}/wikitext-103/ --dataset wt103 --adaptive --n_layer 16 --d_model 128 --n_head 8 --d_head 16 --d_inner 2048 --dropout 0.1 --dropatt 0.0 --optim adam --lr 0.00025 --warmup_step 2000 --max_step 500000 --attn_type 8 --tgt_len 256 --mem_len 0 --eval_tgt_len 256 --batch_size 96 --multi_gpu --use_wandb --project_name 'mgk' --seed 1111 --job_name kde --work_dir {your directory}
 ```
 
 Robust Transformer
 ```
-CUDA_VISIBLE_DEVICES=0,1,2,3 python ./src/train.py --cuda --data {your data directory}/wikitext-103/ --dataset wt103 --adaptive --n_layer 16 --d_model 128 --n_head 8 --d_head 16 --d_inner 2048 --dropout 0.1 --dropatt 0.0 --optim adam --lr 0.00025 --warmup_step 2000 --max_step 500000 --attn_type 9 --tgt_len 256 --mem_len 0 --eval_tgt_len 256 --batch_size 96 --multi_gpu --use_wandb --project_name 'mgk' --seed 1111 --job_name softmax --work_dir {your directory}
+CUDA_VISIBLE_DEVICES=0,1,2,3 python ./src/train.py --cuda --data {your data directory}/wikitext-103/ --dataset wt103 --adaptive --n_layer 16 --d_model 128 --n_head 8 --d_head 16 --d_inner 2048 --dropout 0.1 --dropatt 0.0 --optim adam --lr 0.00025 --warmup_step 2000 --max_step 500000 --attn_type 9 --tgt_len 256 --mem_len 0 --eval_tgt_len 256 --batch_size 96 --multi_gpu --use_wandb --project_name 'mgk' --seed 1111 --huber_a 0.1 --job_name robust --work_dir {your directory}/files_0.1
 ```
 
 ### Evaluation
