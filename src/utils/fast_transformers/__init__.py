@@ -4,17 +4,19 @@
 # https://github.com/idiap/fast-transformers/blob/master/fast_transformers/causal_product/__init__.py
 # Modifications Copyright (c) 2021 Kazuki Irie
 
+import os
 import torch
 from torch.utils.cpp_extension import load
 # Just in time import
 # https://pytorch.org/tutorials/advanced/cpp_extens
 
+file_path = os.getcwd()
 mod_causal_dot_product_cuda = load(
     name="causal_dot_product",
-    sources=["/root/transformer-mgk/language-modeling/lmtool-fwms/src/utils/fast_transformers/causal_product_cuda.cu"], verbose=True)
+    sources=[os.path.join(file_path, "/utils/fast_transformers/causal_product_cuda.cu")], verbose=True)
 mod_causal_dot_backward_cuda = load(
     name="causal_dot_backward",
-    sources=["/root/transformer-mgk/language-modeling/lmtool-fwms/src/utils/fast_transformers/causal_product_cuda.cu"], verbose=True)
+    sources=[os.path.join(file_path, "/utils/fast_transformers/causal_product_cuda.cu")], verbose=True)
 
 causal_dot_product_cuda = mod_causal_dot_product_cuda.causal_dot_product
 causal_dot_backward_cuda = mod_causal_dot_backward_cuda.causal_dot_backward

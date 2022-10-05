@@ -4,7 +4,7 @@
 # Written by Angelos Katharopoulos <angelos.katharopoulos@idiap.ch>,
 # Apoorv Vyas <avyas@idiap.ch>
 # Modifications Copyright (c) 2021 Kazuki Irie
-
+import os
 import torch
 from torch.utils.cpp_extension import load
 # Just in time import
@@ -17,12 +17,13 @@ from torch.utils.cpp_extension import load
 #     name="fast_weight_backward",
 #     sources=["utils/fast_fast_weight/fast_weight_cuda.cu"], verbose=True)
 
+file_path = os.getcwd()
 mod_causal_dot_product_cuda = load(
     name="fast_weight_forward",
-    sources=["/root/transformer-mgk/language-modeling/lmtool-fwms/src/utils/fast_fast_weight/fast_weight_cuda.cu"], verbose=True)
+    sources=[os.path.join(file_path, "/utils/fast_transformers/causal_product_cuda.cu")], verbose=True)
 mod_causal_dot_backward_cuda = load(
     name="fast_weight_backward",
-    sources=["/root/transformer-mgk/language-modeling/lmtool-fwms/src/utils/fast_fast_weight/fast_weight_cuda.cu"], verbose=True)
+    sources=[os.path.join(file_path, "/utils/fast_transformers/causal_product_cuda.cu")], verbose=True)
 
 
 causal_dot_product_cuda = mod_causal_dot_product_cuda.fast_weight_forward
