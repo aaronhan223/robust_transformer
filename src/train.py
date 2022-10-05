@@ -24,6 +24,8 @@ parser.add_argument('--data', type=str, default='../data/wikitext-103',
 parser.add_argument('--dataset', type=str, default='wt103',
                     choices=['wt103', 'lm1b', 'enwik8', 'text8'],
                     help='dataset name')
+parser.add_argument('--huber_a', type=float, default=0.2,
+                    help='parameter of huber loss function')
 parser.add_argument('--n_layer', type=int, default=12,
                     help='number of total layers')
 parser.add_argument('--n_head', type=int, default=10,
@@ -435,6 +437,7 @@ else:
         args.d_inner,
         args.dropout,
         args.dropatt,
+        huber_a=args.huber_a,
         tie_weight=args.tied,
         d_embed=args.d_embed,
         div_val=args.div_val,

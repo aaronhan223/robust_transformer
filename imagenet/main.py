@@ -31,6 +31,7 @@ def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     parser.add_argument('--batch-size', default=64, type=int)
     parser.add_argument('--epochs', default=300, type=int)
+    parser.add_argument('--huber_a', default=0.2, type=float)
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
@@ -281,6 +282,7 @@ def main(args):
             drop_rate=args.drop,
             drop_path_rate=args.drop_path,
             drop_block_rate=None,
+            huber_a=args.huber_a
         )
     else:
         model = create_model(
@@ -291,7 +293,8 @@ def main(args):
             drop_path_rate=args.drop_path,
             drop_block_rate=None,
             kernel_size=args.kernel_size,
-            stride=args.stride
+            stride=args.stride,
+            huber_a=args.huber_a
         )
 
     if args.finetune:

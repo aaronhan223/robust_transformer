@@ -414,8 +414,7 @@ class RBFMultiHeadAttn(nn.Module):
     
     def compute_weights(self, w_init, x, attn_mask=None):
         obj_1 = torch.ones((x.size(0), x.size(1), x.size(2)), device='cuda:'+str(torch.cuda.current_device()))
-        diff = x[:, None, :, :, :] - x[None, :, :, :, :]
-        diff_norm = torch.linalg.norm(diff, dim=-1, ord=2) ** 2
+        diff_norm = torch.square(torch.cdist(x.transpose(0, 2), x.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         if attn_mask is not None and attn_mask.any().item():
             diff_norm.masked_fill_(attn_mask[:,:,:,None], float('inf'))
         rbf = torch.exp(-self.scale * diff_norm)
@@ -457,12 +456,11 @@ class RBFMultiHeadAttn(nn.Module):
         head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
 
         # here compute approx attention
-        head_k = F.normalize(head_k, dim=3)
-        diff = head_q[:, None, :, :, :] - head_k[None, :, :, :, :]
-        diff_norm = torch.linalg.norm(diff, dim=4, ord=2) ** 2
+        head_k = F.normalize(head_k, dim=-1)
+        diff_norm = torch.square(torch.cdist(head_q.transpose(0, 2), head_k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         weights = F.normalize(attn_mask[:, :, 0].type(torch.FloatTensor), dim=1, p=1.0)
         weights = weights.to(device='cuda:'+str(torch.cuda.current_device()))
-        head_kv = torch.cat((head_k, head_v), 3)
+        head_kv = torch.cat((head_k, head_v), -1)
         kv_weights = self.compute_weights(weights, head_kv, attn_mask=attn_mask)[None, :, :, :]
         k_weights = self.compute_weights(weights, head_k, attn_mask=attn_mask)[None, :, :, :]
 
@@ -1651,7 +1649,7 @@ class PerformerDecoderLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, n_head, d_model, d_head, d_inner, dropout, attn_type, update_mode = 'rbf2keys', scale_w = 1.,
+    def __init__(self, n_head, d_model, d_head, d_inner, dropout, attn_type, huber_a=0.2, update_mode = 'rbf2keys', scale_w = 1.,
                  **kwargs):
         super(DecoderLayer, self).__init__()
 
@@ -1693,6 +1691,8 @@ class DecoderLayer(nn.Module):
         if attn_type in [400, 500]:
             self.dec_attn = attn_func(n_head, d_model, d_head, dropout, 
             update_mode = update_mode, scale_w = scale_w, **kwargs)
+        elif attn_type == 9:
+            self.dec_attn = attn_func(n_head, d_model, d_head, dropout, huber_a, **kwargs)
         else:
             self.dec_attn = attn_func(n_head, d_model, d_head, dropout, **kwargs)
         self.pos_ff = PositionwiseFF(
@@ -1831,6 +1831,7 @@ class MemTransformerLM(nn.Module):
                  d_inner,
                  dropout,
                  dropatt,
+                 huber_a=0.2,
                  tie_weight=True,
                  d_embed=None,
                  div_val=1,
@@ -1899,12 +1900,14 @@ class MemTransformerLM(nn.Module):
             # 2: baseline vanilla transformer
             # 3:
             # 4: linear transformer
+            # 8: Transformer-KDE
+            # 9: Transformer-RKDE
             for i in range(n_layer):
                 self.layers.append(
                     DecoderLayer(
                         n_head, d_model, d_head, d_inner, dropout,
                         dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        attn_type=attn_type)
+                        attn_type=attn_type, huber_a=huber_a)
                 )
         
         elif attn_type in [200,]:  # absolute embeddings
