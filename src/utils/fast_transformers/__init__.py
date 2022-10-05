@@ -13,10 +13,10 @@ from torch.utils.cpp_extension import load
 file_path = os.getcwd()
 mod_causal_dot_product_cuda = load(
     name="causal_dot_product",
-    sources=[os.path.join(file_path, "/utils/fast_transformers/causal_product_cuda.cu")], verbose=True)
+    sources=[file_path + "/src/utils/fast_transformers/causal_product_cuda.cu"], verbose=True)
 mod_causal_dot_backward_cuda = load(
     name="causal_dot_backward",
-    sources=[os.path.join(file_path, "/utils/fast_transformers/causal_product_cuda.cu")], verbose=True)
+    sources=[file_path + "/src/utils/fast_transformers/causal_product_cuda.cu"], verbose=True)
 
 causal_dot_product_cuda = mod_causal_dot_product_cuda.causal_dot_product
 causal_dot_backward_cuda = mod_causal_dot_backward_cuda.causal_dot_backward

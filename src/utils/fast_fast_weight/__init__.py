@@ -20,10 +20,10 @@ from torch.utils.cpp_extension import load
 file_path = os.getcwd()
 mod_causal_dot_product_cuda = load(
     name="fast_weight_forward",
-    sources=[os.path.join(file_path, "/utils/fast_fast_weight/causal_product_cuda.cu")], verbose=True)
+    sources=[file_path + "/src/utils/fast_fast_weight/fast_weight_cuda.cu"], verbose=True)
 mod_causal_dot_backward_cuda = load(
     name="fast_weight_backward",
-    sources=[os.path.join(file_path, "/utils/fast_fast_weight/causal_product_cuda.cu")], verbose=True)
+    sources=[file_path + "/src/utils/fast_fast_weight/fast_weight_cuda.cu"], verbose=True)
 
 
 causal_dot_product_cuda = mod_causal_dot_product_cuda.fast_weight_forward
