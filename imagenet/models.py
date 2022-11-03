@@ -6,6 +6,7 @@ from functools import partial
 from timm.models.vision_transformer import VisionTransformer, _cfg, Attention, Block
 from timm.models.registry import register_model
 from timm.models.layers import PatchEmbed, Mlp, DropPath, trunc_normal_, lecun_normal_
+import copy
 import pdb
 # import fourier_layer_cuda
 
@@ -152,13 +153,13 @@ class KdeTransformer(VisionTransformer):
             self.init_weights(weight_init)
 
 class RobustAttention(nn.Module):
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., huber_a=.2):
+    def __init__(self, dim, loss='hampel', num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., h_a=0.2):
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
         self.num_heads = num_heads
         head_dim = dim // num_heads
         self.scale = head_dim ** -0.5
-        self.huber_a = huber_a
+        self.loss_type = loss
         self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
@@ -174,8 +175,23 @@ class RobustAttention(nn.Module):
         h_norm_2 = obj_1 + obj_2 + obj_3
         h_norm = torch.sqrt(h_norm_2)
         h_norm = h_norm.to(device=torch.device(f'cuda:{torch.cuda.current_device()}'), dtype=torch.float64)
-        h_norm_huber = torch.where(h_norm <= self.huber_a, 1., self.huber_a/h_norm).to(dtype=torch.float32)
-        log_norm = torch.log(h_norm_huber)
+        if self.loss_type == 'huber':
+            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
+            cond = h_norm <= h_a
+            h_norm_robust = torch.where(cond, 1., h_a/h_norm).to(dtype=torch.float32)
+        elif self.loss_type == 'hampel':
+            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
+            h_b = torch.quantile(h_norm, 0.8).cpu().detach()
+            h_c = torch.quantile(h_norm, 0.9).cpu().detach()
+            cond_1 = h_norm < h_a
+            cond_2 = ((h_norm >= h_a) & (h_norm < h_b))
+            cond_3 = ((h_norm >= h_b) & (h_norm < h_c))
+            cond_4 = h_norm >= h_c
+            h_norm_1 = torch.where(cond_1, 1., h_norm)
+            h_norm_2 = torch.where(cond_2, h_a/h_norm_1, h_norm_1)
+            h_norm_3 = torch.where(cond_3, ((h_a * (h_c - h_norm_2))/((h_c - h_b) * h_norm_2)), h_norm_2)
+            h_norm_robust = torch.where(cond_4, 0.01, h_norm_3).to(dtype=torch.float32)
+        log_norm = torch.log(h_norm_robust)
         w = log_norm - torch.logsumexp(log_norm, dim=0, keepdim=True)
         return w
 
@@ -208,10 +224,10 @@ class RobustAttention(nn.Module):
 class RobustBlock(nn.Module):
     def __init__(
             self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0., init_values=None,
-            drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, huber_a=0.2):
+            drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, huber_a=0.2, loss_type='huber'):
         super().__init__()
         self.norm1 = norm_layer(dim)
-        self.attn = RobustAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, huber_a=huber_a)
+        self.attn = RobustAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, h_a=huber_a, loss=loss_type)
         self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
@@ -235,7 +251,7 @@ class RobustVisionTransformer(VisionTransformer):
             self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, global_pool='token',
             embed_dim=768, depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, init_values=None,
             class_token=True, no_embed_class=False, fc_norm=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
-            weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=RobustBlock, huber_a=0.2):
+            weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=RobustBlock, huber_a=0.2, loss_type='huber'):
         """
         Args:
             img_size (int, tuple): input image size
@@ -287,7 +303,7 @@ class RobustVisionTransformer(VisionTransformer):
             block_fn(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, init_values=init_values,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, act_layer=act_layer,
-                huber_a=huber_a)
+                huber_a=huber_a, loss_type=loss_type)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim) if not use_fc_norm else nn.Identity()
 
@@ -489,6 +505,7 @@ class DistilledVisionTransformer(VisionTransformer):
 @register_model
 def deit_kde_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['pretrained_cfg']
+    del kwargs['huber_a']
     model = KdeTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
@@ -519,6 +536,7 @@ def deit_robust_tiny_patch16_224(pretrained=False, **kwargs):
 @register_model
 def deit_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['pretrained_cfg']
+    del kwargs['huber_a']
     model = VisionTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)

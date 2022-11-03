@@ -389,15 +389,16 @@ class KNNMultiHeadAttn(nn.Module):
 
 
 class RBFMultiHeadAttn(nn.Module):
-    def __init__(self, n_head, d_model, d_head, dropout, huber_a=0.8, dropatt=0, 
-                 pre_lnorm=False):
+    def __init__(self, n_head, d_model, d_head, dropout, huber_a=0.8, loss_type='huber',
+                 dropatt=0, pre_lnorm=False):
         super(RBFMultiHeadAttn, self).__init__()
 
         self.n_head = n_head
         self.d_model = d_model
         self.d_head = d_head
         self.dropout = dropout
-        self.huber_a = huber_a
+        # self.huber_a = huber_a
+        self.loss_type = loss_type
 
         self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
         self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
@@ -427,8 +428,24 @@ class RBFMultiHeadAttn(nn.Module):
         h_norm_2 = obj_1 + obj_2 + obj_3
         h_norm = torch.sqrt(h_norm_2)
         h_norm = h_norm.to(device=torch.device(f'cuda:{torch.cuda.current_device()}'), dtype=torch.float64)
-        h_norm_huber = torch.where(h_norm <= self.huber_a, 1., self.huber_a/h_norm).to(dtype=torch.float32)
-        log_norm = torch.log(h_norm_huber)
+        if self.loss_type == 'huber':
+            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
+            cond = h_norm <= h_a
+            h_norm_robust = torch.where(cond, 1., h_a/h_norm).to(dtype=torch.float32)
+        elif self.loss_type == 'hampel':
+            print(self.loss_type)
+            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
+            h_b = torch.quantile(h_norm, 0.8).cpu().detach()
+            h_c = torch.quantile(h_norm, 0.9).cpu().detach()
+            cond_1 = h_norm < h_a
+            cond_2 = ((h_norm >= h_a) & (h_norm < h_b))
+            cond_3 = ((h_norm >= h_b) & (h_norm < h_c))
+            cond_4 = h_norm >= h_c
+            h_norm_1 = torch.where(cond_1, 1., h_norm)
+            h_norm_2 = torch.where(cond_2, h_a/h_norm_1, h_norm_1)
+            h_norm_3 = torch.where(cond_3, ((h_a * (h_c - h_norm_2))/((h_c - h_b) * h_norm_2)), h_norm_2)
+            h_norm_robust = torch.where(cond_4, 0.01, h_norm_3).to(dtype=torch.float32)
+        log_norm = torch.log(h_norm_robust)
         w = log_norm - torch.logsumexp(log_norm, dim=0, keepdim=True)
         return w
 
@@ -1649,8 +1666,8 @@ class PerformerDecoderLayer(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, n_head, d_model, d_head, d_inner, dropout, attn_type, huber_a=0.2, update_mode = 'rbf2keys', scale_w = 1.,
-                 **kwargs):
+    def __init__(self, n_head, d_model, d_head, d_inner, dropout, attn_type, huber_a=0.2, loss_type='huber',
+                 update_mode = 'rbf2keys', scale_w = 1., **kwargs):
         super(DecoderLayer, self).__init__()
 
         if attn_type == 2:
@@ -1692,7 +1709,7 @@ class DecoderLayer(nn.Module):
             self.dec_attn = attn_func(n_head, d_model, d_head, dropout, 
             update_mode = update_mode, scale_w = scale_w, **kwargs)
         elif attn_type == 9:
-            self.dec_attn = attn_func(n_head, d_model, d_head, dropout, huber_a, **kwargs)
+            self.dec_attn = attn_func(n_head, d_model, d_head, dropout, huber_a, loss_type, **kwargs)
         else:
             self.dec_attn = attn_func(n_head, d_model, d_head, dropout, **kwargs)
         self.pos_ff = PositionwiseFF(
@@ -1832,6 +1849,7 @@ class MemTransformerLM(nn.Module):
                  dropout,
                  dropatt,
                  huber_a=0.2,
+                 loss_type='huber',
                  tie_weight=True,
                  d_embed=None,
                  div_val=1,
@@ -1907,7 +1925,7 @@ class MemTransformerLM(nn.Module):
                     DecoderLayer(
                         n_head, d_model, d_head, d_inner, dropout,
                         dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        attn_type=attn_type, huber_a=huber_a)
+                        attn_type=attn_type, huber_a=huber_a, loss_type=loss_type)
                 )
         
         elif attn_type in [200,]:  # absolute embeddings

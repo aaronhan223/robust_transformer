@@ -26,6 +26,8 @@ parser.add_argument('--dataset', type=str, default='wt103',
                     help='dataset name')
 parser.add_argument('--huber_a', type=float, default=0.2,
                     help='parameter of huber loss function')
+parser.add_argument('--loss_type', type=str, default='huber',
+                    help='type of robust loss function')
 parser.add_argument('--n_layer', type=int, default=12,
                     help='number of total layers')
 parser.add_argument('--n_head', type=int, default=10,
@@ -438,6 +440,7 @@ else:
         args.dropout,
         args.dropatt,
         huber_a=args.huber_a,
+        loss_type=args.loss_type,
         tie_weight=args.tied,
         d_embed=args.d_embed,
         div_val=args.div_val,

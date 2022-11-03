@@ -48,7 +48,7 @@ def train_one_epoch(model: torch.nn.Module, criterion: DistillationLoss,
         loss_value = loss.item()
 
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
+            print("Loss is {}, ".format(loss_value))
             sys.exit(1)
 
         optimizer.zero_grad()
