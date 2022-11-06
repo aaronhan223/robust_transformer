@@ -1,0 +1,9 @@
+#!/bin/bash
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.launch --nproc_per_node=4 --master_port=1619 --use_env main.py --model deit_robust_tiny_patch16_224 --batch-size 256 --data-path /home/tongzheng/imagenet --output_dir /home/tongzheng/imagenet/files_h0.2_hampel_iter1 --use_wandb 1 --project_name 'RobustFormer' --job_name imgnet_h0.2_hampel_iter1 --huber_a 0.2 --loss_type 'hampel' --num_iter_kirwls 1
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.launch --nproc_per_node=4 --master_port=1620 --use_env main.py --model deit_robust_tiny_patch16_224 --batch-size 256 --data-path /home/tongzheng/imagenet --output_dir /home/tongzheng/imagenet/files_h0.2_hampel_iter2 --use_wandb 1 --project_name 'RobustFormer' --job_name imgnet_h0.2_hampel_iter2 --huber_a 0.2 --loss_type 'hampel' --num_iter_kirwls 2
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.launch --nproc_per_node=4 --master_port=1621 --use_env main.py --model deit_robust_tiny_patch16_224 --batch-size 256 --data-path /home/tongzheng/imagenet --output_dir /home/tongzheng/imagenet/files_h0.2_hampel_iter3 --use_wandb 1 --project_name 'RobustFormer' --job_name imgnet_h0.2_hampel_iter3 --huber_a 0.2 --loss_type 'hampel' --num_iter_kirwls 3
+
+CUDA_VISIBLE_DEVICES=4,5,6,7 python -m torch.distributed.launch --nproc_per_node=4 --master_port=1622 --use_env main.py --model deit_robust_tiny_patch16_224 --batch-size 256 --data-path /home/tongzheng/imagenet --output_dir /home/tongzheng/imagenet/files_h0.2_hampel_iter5 --use_wandb 1 --project_name 'RobustFormer' --job_name imgnet_h0.2_hampel_iter5 --huber_a 0.2 --loss_type 'hampel' --num_iter_kirwls 5
