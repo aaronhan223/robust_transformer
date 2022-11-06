@@ -31,8 +31,9 @@ def get_args_parser():
     parser = argparse.ArgumentParser('DeiT training and evaluation script', add_help=False)
     parser.add_argument('--batch-size', default=64, type=int)
     parser.add_argument('--epochs', default=300, type=int)
-    parser.add_argument('--huber_a', default=1.4, type=float)
+    parser.add_argument('--huber_a', default=0.2, type=float)
     parser.add_argument('--loss_type', default='huber', type=str)
+    parser.add_argument('--num_iter_kirwls', default=1, type=int)
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
@@ -284,7 +285,8 @@ def main(args):
             drop_path_rate=args.drop_path,
             drop_block_rate=None,
             huber_a=args.huber_a,
-            loss_type=args.loss_type
+            loss_type=args.loss_type,
+            num_iter=args.num_iter_kirwls
         )
     else:
         model = create_model(
@@ -297,7 +299,8 @@ def main(args):
             kernel_size=args.kernel_size,
             stride=args.stride,
             huber_a=args.huber_a,
-            loss_type=args.loss_type
+            loss_type=args.loss_type,
+            num_iter=args.num_iter_kirwls
         )
 
     if args.finetune:

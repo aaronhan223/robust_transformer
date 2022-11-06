@@ -153,7 +153,7 @@ class KdeTransformer(VisionTransformer):
             self.init_weights(weight_init)
 
 class RobustAttention(nn.Module):
-    def __init__(self, dim, loss='hampel', num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., h_a=0.2):
+    def __init__(self, dim, loss='hampel', num_iter=1, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., h_a=0.2):
         super().__init__()
         assert dim % num_heads == 0, 'dim should be divisible by num_heads'
         self.num_heads = num_heads
@@ -164,35 +164,36 @@ class RobustAttention(nn.Module):
         self.attn_drop = nn.Dropout(attn_drop)
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
+        self.num_iter = num_iter
+        self.h_a = h_a
 
-    def compute_weights(self, w_init, x):
+    def compute_weights(self, w_init, x, rbf, n):
         obj_1 = torch.ones((x.size(0), x.size(1), x.size(2)), device=f'cuda:{torch.cuda.current_device()}')
-        diff_norm = torch.square(torch.cdist(x.transpose(0, 2), x.transpose(0, 2), p=2.0)).permute(2,3,1,0)
-        rbf = torch.exp(-self.scale * diff_norm)
-
+        if len(w_init.size()) != 2:
+            w_init = torch.mean(w_init, dim=(2, 3))
+            w_init = w_init.repeat(w_init.size()[1], 1)
         obj_2 = torch.einsum('ij,ijbn->ibn', (w_init, rbf))
         obj_3 = torch.einsum('ij,jbn->ibn', (w_init, torch.einsum('ij,ijbn->ibn', (w_init, rbf))))
         h_norm_2 = obj_1 + obj_2 + obj_3
         h_norm = torch.sqrt(h_norm_2)
         h_norm = h_norm.to(device=torch.device(f'cuda:{torch.cuda.current_device()}'), dtype=torch.float64)
+
         if self.loss_type == 'huber':
-            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
-            cond = h_norm <= h_a
-            h_norm_robust = torch.where(cond, 1., h_a/h_norm).to(dtype=torch.float32)
+            h_norm_robust = torch.where(h_norm <= self.h_a, 1., self.h_a/h_norm).to(dtype=torch.float32)
         elif self.loss_type == 'hampel':
-            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
-            h_b = torch.quantile(h_norm, 0.8).cpu().detach()
-            h_c = torch.quantile(h_norm, 0.9).cpu().detach()
-            cond_1 = h_norm < h_a
-            cond_2 = ((h_norm >= h_a) & (h_norm < h_b))
+            h_b, h_c = 2 * self.h_a, 3 * self.h_a
+            cond_1 = h_norm < self.h_a
+            cond_2 = ((h_norm >= self.h_a) & (h_norm < h_b))
             cond_3 = ((h_norm >= h_b) & (h_norm < h_c))
             cond_4 = h_norm >= h_c
             h_norm_1 = torch.where(cond_1, 1., h_norm)
-            h_norm_2 = torch.where(cond_2, h_a/h_norm_1, h_norm_1)
-            h_norm_3 = torch.where(cond_3, ((h_a * (h_c - h_norm_2))/((h_c - h_b) * h_norm_2)), h_norm_2)
+            h_norm_2 = torch.where(cond_2, self.h_a/h_norm_1, h_norm_1)
+            h_norm_3 = torch.where(cond_3, ((self.h_a * (h_c - h_norm_2))/((h_c - h_b) * h_norm_2)), h_norm_2)
             h_norm_robust = torch.where(cond_4, 0.01, h_norm_3).to(dtype=torch.float32)
         log_norm = torch.log(h_norm_robust)
         w = log_norm - torch.logsumexp(log_norm, dim=0, keepdim=True)
+        if n + 1 < self.num_iter:
+            w = torch.exp(w)
         return w
 
     def forward(self, x):
@@ -207,8 +208,20 @@ class RobustAttention(nn.Module):
         weights = F.normalize(torch.ones((N, N)).type(torch.FloatTensor), dim=1, p=1.0)
         weights = weights.to(device=f'cuda:{torch.cuda.current_device()}')
         kv = torch.cat((k, v.permute(2, 0, 1, 3)), -1)
-        kv_weights = self.compute_weights(weights, kv)[None, :, :, :]
-        k_weights = self.compute_weights(weights, k)[None, :, :, :]
+        diff_norm_k = torch.square(torch.cdist(k.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
+        rbf_k = torch.exp(-self.scale * diff_norm_k)
+        diff_norm_kv = torch.square(torch.cdist(kv.transpose(0, 2), kv.transpose(0, 2), p=2.0)).permute(2,3,1,0)
+        rbf_kv = torch.exp(-self.scale * diff_norm_kv)
+        kv_weights = weights
+        k_weights = weights
+
+        for i in range(self.num_iter):
+            kv_weights = self.compute_weights(kv_weights, kv, rbf_kv, i)[None, :, :, :]
+            k_weights = self.compute_weights(k_weights, k, rbf_k, i)[None, :, :, :]
+            # kv_weights = torch.mean(kv_weights, dim=(2, 3))
+            # kv_weights = kv_weights.repeat(kv_weights.size()[1], 1)
+            # print('kv_weights', kv_weights)
+
         scaled_norm = -self.scale * torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         log_result = kv_weights + scaled_norm - torch.logsumexp(k_weights + scaled_norm, dim=1, keepdim=True)
         attn = torch.exp(log_result)
@@ -224,10 +237,10 @@ class RobustAttention(nn.Module):
 class RobustBlock(nn.Module):
     def __init__(
             self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0., init_values=None,
-            drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, huber_a=0.2, loss_type='huber'):
+            drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, huber_a=0.2, loss_type='huber', num_iter=1):
         super().__init__()
         self.norm1 = norm_layer(dim)
-        self.attn = RobustAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, h_a=huber_a, loss=loss_type)
+        self.attn = RobustAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, h_a=huber_a, loss=loss_type, num_iter=num_iter)
         self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
@@ -251,7 +264,8 @@ class RobustVisionTransformer(VisionTransformer):
             self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, global_pool='token',
             embed_dim=768, depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, init_values=None,
             class_token=True, no_embed_class=False, fc_norm=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
-            weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=RobustBlock, huber_a=0.2, loss_type='huber'):
+            weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=RobustBlock,
+            huber_a=0.2, loss_type='huber', num_iter=1):
         """
         Args:
             img_size (int, tuple): input image size
@@ -303,7 +317,7 @@ class RobustVisionTransformer(VisionTransformer):
             block_fn(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, init_values=init_values,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, act_layer=act_layer,
-                huber_a=huber_a, loss_type=loss_type)
+                huber_a=huber_a, loss_type=loss_type, num_iter=num_iter)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim) if not use_fc_norm else nn.Identity()
 
