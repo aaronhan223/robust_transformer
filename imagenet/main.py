@@ -287,7 +287,8 @@ def main(args):
             drop_block_rate=None,
             huber_a=args.huber_a,
             loss_type=args.loss_type,
-            num_iter=args.num_iter_kirwls
+            num_iter=args.num_iter_kirwls,
+            outlier_fraction=args.outlier_fraction
         )
     else:
         model = create_model(
@@ -301,7 +302,8 @@ def main(args):
             stride=args.stride,
             huber_a=args.huber_a,
             loss_type=args.loss_type,
-            num_iter=args.num_iter_kirwls
+            num_iter=args.num_iter_kirwls,
+            outlier_fraction=args.outlier_fraction
         )
 
     if args.finetune:
