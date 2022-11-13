@@ -389,7 +389,7 @@ class KNNMultiHeadAttn(nn.Module):
 
 
 class RBFMultiHeadAttn(nn.Module):
-    def __init__(self, n_head, d_model, d_head, dropout, huber_a=0.8, loss_type='huber',
+    def __init__(self, n_head, d_model, d_head, dropout, huber_a=0.2, loss_type='huber',
                  dropatt=0, pre_lnorm=False):
         super(RBFMultiHeadAttn, self).__init__()
 
@@ -397,7 +397,7 @@ class RBFMultiHeadAttn(nn.Module):
         self.d_model = d_model
         self.d_head = d_head
         self.dropout = dropout
-        # self.huber_a = huber_a
+        self.huber_a = huber_a
         self.loss_type = loss_type
 
         self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
@@ -429,21 +429,16 @@ class RBFMultiHeadAttn(nn.Module):
         h_norm = torch.sqrt(h_norm_2)
         h_norm = h_norm.to(device=torch.device(f'cuda:{torch.cuda.current_device()}'), dtype=torch.float64)
         if self.loss_type == 'huber':
-            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
-            cond = h_norm <= h_a
-            h_norm_robust = torch.where(cond, 1., h_a/h_norm).to(dtype=torch.float32)
+            h_norm_robust = torch.where(h_norm <= self.huber_a, 1., self.huber_a/h_norm).to(dtype=torch.float32)
         elif self.loss_type == 'hampel':
-            print(self.loss_type)
-            h_a = torch.quantile(h_norm, 0.7).cpu().detach()
-            h_b = torch.quantile(h_norm, 0.8).cpu().detach()
-            h_c = torch.quantile(h_norm, 0.9).cpu().detach()
-            cond_1 = h_norm < h_a
-            cond_2 = ((h_norm >= h_a) & (h_norm < h_b))
+            h_b, h_c = 2 * self.huber_a, 3 * self.huber_a
+            cond_1 = h_norm < self.huber_a
+            cond_2 = ((h_norm >= self.huber_a) & (h_norm < h_b))
             cond_3 = ((h_norm >= h_b) & (h_norm < h_c))
             cond_4 = h_norm >= h_c
             h_norm_1 = torch.where(cond_1, 1., h_norm)
-            h_norm_2 = torch.where(cond_2, h_a/h_norm_1, h_norm_1)
-            h_norm_3 = torch.where(cond_3, ((h_a * (h_c - h_norm_2))/((h_c - h_b) * h_norm_2)), h_norm_2)
+            h_norm_2 = torch.where(cond_2, self.huber_a/h_norm_1, h_norm_1)
+            h_norm_3 = torch.where(cond_3, ((self.huber_a * (h_c - h_norm_2))/((h_c - h_b) * h_norm_2)), h_norm_2)
             h_norm_robust = torch.where(cond_4, 0.01, h_norm_3).to(dtype=torch.float32)
         log_norm = torch.log(h_norm_robust)
         w = log_norm - torch.logsumexp(log_norm, dim=0, keepdim=True)
