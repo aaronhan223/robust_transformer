@@ -1,11 +1,14 @@
+from os import device_encoding
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from functools import partial
+import numpy as np
 
 from timm.models.vision_transformer import VisionTransformer, _cfg, Attention, Block
 from timm.models.registry import register_model
 from timm.models.layers import PatchEmbed, Mlp, DropPath, trunc_normal_, lecun_normal_
+from cvxopt import matrix, solvers
 import copy
 import pdb
 # import fourier_layer_cuda
@@ -218,9 +221,6 @@ class RobustAttention(nn.Module):
         for i in range(self.num_iter):
             kv_weights = self.compute_weights(kv_weights, kv, rbf_kv, i)[None, :, :, :]
             k_weights = self.compute_weights(k_weights, k, rbf_k, i)[None, :, :, :]
-            # kv_weights = torch.mean(kv_weights, dim=(2, 3))
-            # kv_weights = kv_weights.repeat(kv_weights.size()[1], 1)
-            # print('kv_weights', kv_weights)
 
         scaled_norm = -self.scale * torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         log_result = kv_weights + scaled_norm - torch.logsumexp(k_weights + scaled_norm, dim=1, keepdim=True)
@@ -326,6 +326,154 @@ class RobustVisionTransformer(VisionTransformer):
         self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
         if weight_init != 'skip':
             self.init_weights(weight_init)
+
+
+class SPKDEAttention(nn.Module):
+    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., outlier_fraction=0.05):
+        super().__init__()
+        assert dim % num_heads == 0, 'dim should be divisible by num_heads'
+        self.num_heads = num_heads
+        head_dim = dim // num_heads
+        self.scale = head_dim ** -0.5
+        self.outlier = outlier_fraction
+        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.attn_drop = nn.Dropout(attn_drop)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(proj_drop)
+        self.beta = 1. / (1 - self.outlier)
+
+    def compute_weights(self, x):
+        norm = torch.exp(-self.scale * torch.square(torch.cdist(x.transpose(0, 2), x.transpose(0, 2), p=2.0)).permute(2,3,1,0))
+        # norm *= (self.scale * np.pi)**(-norm.shape[1] / 2.)
+        gram = np.mean(norm.cpu().detach().numpy(), axis=(2, 3)).astype(np.double)
+        P = matrix(gram)
+        q = matrix(-self.beta / norm.shape[0] * np.sum(gram, axis=0))
+        G = matrix(-np.identity(norm.shape[0]))
+        h_solver = matrix(np.zeros(norm.shape[0]))
+        A = matrix(np.ones((1, norm.shape[0])))
+        b = matrix(1.0)
+        sol = solvers.qp(P, q, G, h_solver, A, b)
+        a = torch.tensor(np.array(sol['x']).reshape((-1,)), device=f'cuda:{torch.cuda.current_device()}')[None, :, None, None]
+        weights = torch.log(a.repeat(1, 1, norm.shape[2], norm.shape[3])).to(dtype=torch.float32)
+        return weights
+
+    def forward(self, x):
+        B, N, C = x.shape
+        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv.unbind(0)
+
+        q = q.permute(2, 0, 1, 3)
+        k = k.permute(2, 0, 1, 3)
+        k = F.normalize(k, dim=-1)
+        kv = torch.cat((k, v.permute(2, 0, 1, 3)), -1)
+        weights_joint = self.compute_weights(kv)
+        weights_marginal = self.compute_weights(k)
+
+        scaled_norm = -self.scale * torch.square(torch.cdist(q.transpose(0, 2), k.transpose(0, 2), p=2.0)).permute(2,3,1,0)
+        log_result = weights_joint + scaled_norm - torch.logsumexp(weights_marginal + scaled_norm, dim=1, keepdim=True)
+        attn = torch.exp(log_result)
+        attn = attn.permute(2, 3, 0, 1)
+        attn = self.attn_drop(attn)
+
+        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x
+
+
+class SPKDEBlock(nn.Module):
+    def __init__(
+            self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0., init_values=None,
+            drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, outlier_fraction=.05):
+        super().__init__()
+        self.norm1 = norm_layer(dim)
+        self.attn = SPKDEAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop, outlier_fraction=outlier_fraction)
+        self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
+        self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+        self.norm2 = norm_layer(dim)
+        self.mlp = Mlp(in_features=dim, hidden_features=int(dim * mlp_ratio), act_layer=act_layer, drop=drop)
+        self.ls2 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
+        self.drop_path2 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
+
+    def forward(self, x):
+        x = x + self.drop_path1(self.ls1(self.attn(self.norm1(x))))
+        x = x + self.drop_path2(self.ls2(self.mlp(self.norm2(x))))
+        return x
+
+
+class SPKDEVisionTransformer(VisionTransformer):
+    """ SPKDE Vision Transformer
+    Implementation based on:
+    https://proceedings.neurips.cc/paper/2014/file/0e01938fc48a2cfb5f2217fbfb00722d-Paper.pdf
+    """
+    def __init__(
+            self, img_size=224, patch_size=16, in_chans=3, num_classes=1000, global_pool='token',
+            embed_dim=768, depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, init_values=None,
+            class_token=True, no_embed_class=False, fc_norm=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
+            weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=SPKDEBlock,
+            outlier_fraction=.05):
+        """
+        Args:
+            img_size (int, tuple): input image size
+            patch_size (int, tuple): patch size
+            in_chans (int): number of input channels
+            num_classes (int): number of classes for classification head
+            global_pool (str): type of global pooling for final sequence (default: 'token')
+            embed_dim (int): embedding dimension
+            depth (int): depth of transformer
+            num_heads (int): number of attention heads
+            mlp_ratio (int): ratio of mlp hidden dim to embedding dim
+            qkv_bias (bool): enable bias for qkv if True
+            init_values: (float): layer-scale init values
+            class_token (bool): use class token
+            fc_norm (Optional[bool]): pre-fc norm after pool, set if global_pool == 'avg' if None (default: None)
+            drop_rate (float): dropout rate
+            attn_drop_rate (float): attention dropout rate
+            drop_path_rate (float): stochastic depth rate
+            weight_init (str): weight init scheme
+            embed_layer (nn.Module): patch embedding layer
+            norm_layer: (nn.Module): normalization layer
+            act_layer: (nn.Module): MLP activation layer
+        """
+        super().__init__()
+        assert global_pool in ('', 'avg', 'token')
+        assert class_token or global_pool != 'token'
+        use_fc_norm = global_pool == 'avg' if fc_norm is None else fc_norm
+        norm_layer = norm_layer or partial(nn.LayerNorm, eps=1e-6)
+        act_layer = act_layer or nn.GELU
+
+        self.num_classes = num_classes
+        self.global_pool = global_pool
+        self.num_features = self.embed_dim = embed_dim  # num_features for consistency with other models
+        self.num_prefix_tokens = 1 if class_token else 0
+        self.no_embed_class = no_embed_class
+        self.grad_checkpointing = False
+
+        self.patch_embed = embed_layer(
+            img_size=img_size, patch_size=patch_size, in_chans=in_chans, embed_dim=embed_dim)
+        num_patches = self.patch_embed.num_patches
+        
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) if class_token else None
+        embed_len = num_patches if no_embed_class else num_patches + self.num_prefix_tokens
+        self.pos_embed = nn.Parameter(torch.randn(1, embed_len, embed_dim) * .02)
+        self.pos_drop = nn.Dropout(p=drop_rate)
+
+        dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]  # stochastic depth decay rule
+        self.blocks = nn.Sequential(*[
+            block_fn(
+                dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, init_values=init_values,
+                drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, act_layer=act_layer,
+                outlier_fraction=outlier_fraction)
+            for i in range(depth)])
+        self.norm = norm_layer(embed_dim) if not use_fc_norm else nn.Identity()
+
+        # Classifier Head
+        self.fc_norm = norm_layer(embed_dim) if use_fc_norm else nn.Identity()
+        self.head = nn.Linear(self.embed_dim, num_classes) if num_classes > 0 else nn.Identity()
+        if weight_init != 'skip':
+            self.init_weights(weight_init)
+
 
 class FourierAttention(nn.Module):
     def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0.):
@@ -520,6 +668,9 @@ class DistilledVisionTransformer(VisionTransformer):
 def deit_kde_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['pretrained_cfg']
     del kwargs['huber_a']
+    del kwargs['loss_type']
+    del kwargs['num_iter']
+    del kwargs['outlier_fraction']
     model = KdeTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
@@ -535,7 +686,26 @@ def deit_kde_tiny_patch16_224(pretrained=False, **kwargs):
 @register_model
 def deit_robust_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['pretrained_cfg']
+    del kwargs['outlier_fraction']
     model = RobustVisionTransformer(
+        patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
+        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    model.default_cfg = _cfg()
+    if pretrained:
+        checkpoint = torch.hub.load_state_dict_from_url(
+            url="https://dl.fbaipublicfiles.com/deit/deit_tiny_patch16_224-a1311bcf.pth",
+            map_location="cpu", check_hash=True
+        )
+        model.load_state_dict(checkpoint["model"])
+    return model
+
+@register_model
+def deit_spkde_tiny_patch16_224(pretrained=False, **kwargs):
+    del kwargs['pretrained_cfg']
+    del kwargs['huber_a']
+    del kwargs['loss_type']
+    del kwargs['num_iter']
+    model = SPKDEVisionTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     model.default_cfg = _cfg()
