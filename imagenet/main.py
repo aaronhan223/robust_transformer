@@ -35,6 +35,7 @@ def get_args_parser():
     parser.add_argument('--loss_type', default='huber', type=str)
     parser.add_argument('--num_iter_kirwls', default=1, type=int)
     parser.add_argument('--outlier_fraction', default=0.05, type=float)
+    parser.add_argument('--num_blocks', default=5, type=float)
 
     # Model parameters
     parser.add_argument('--model', default='deit_base_patch16_224', type=str, metavar='MODEL',
@@ -288,7 +289,8 @@ def main(args):
             huber_a=args.huber_a,
             loss_type=args.loss_type,
             num_iter=args.num_iter_kirwls,
-            outlier_fraction=args.outlier_fraction
+            outlier_fraction=args.outlier_fraction,
+            num_blocks=args.num_blocks
         )
     else:
         model = create_model(
@@ -303,7 +305,8 @@ def main(args):
             huber_a=args.huber_a,
             loss_type=args.loss_type,
             num_iter=args.num_iter_kirwls,
-            outlier_fraction=args.outlier_fraction
+            outlier_fraction=args.outlier_fraction,
+            num_blocks=args.num_blocks
         )
 
     if args.finetune:

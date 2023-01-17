@@ -621,7 +621,7 @@ class MomAttention(nn.Module):
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
         q, k, v = qkv.unbind(0)
         if self.K == 'auto':
-            self.K = int(2 * B * self.outlier) + 1
+            self.K = int(2 * N * self.outlier) + 1
 
         q = q.permute(2, 0, 1, 3)
         k = k.permute(2, 0, 1, 3)
@@ -631,24 +631,21 @@ class MomAttention(nn.Module):
         likelihood = []
         with torch.no_grad():
             for n in range(self.K):
-                q_b = q[:, n * int(B / self.K):(n + 1) * int(B / self.K), :, :]
-                k_b = k[:, n * int(B / self.K):(n + 1) * int(B / self.K), :, :]
+                k_b = k[n * int(N / self.K):(n + 1) * int(N / self.K), :, :, :]
                 scaled_norm_block = -self.scale * torch.square(torch.cdist(
-                    q_b.transpose(0, 2), k_b.transpose(0, 2), p=2.0)).permute(2,3,1,0)
+                    q.transpose(0, 2), k_b.transpose(0, 2), p=2.0)).permute(2,3,1,0)
                 likelihood.append(torch.sum(scaled_norm_block).cpu().detach().numpy())
 
-        # random comments
         b_idx = np.argsort(likelihood)[len(likelihood) // 2]
-        q_block = q[:, b_idx * int(B / self.K):(b_idx + 1) * int(B / self.K), :, :]
-        k_block = k[:, b_idx * int(B / self.K):(b_idx + 1) * int(B / self.K), :, :]
-        v_block = v[b_idx * int(B / self.K):(b_idx + 1) * int(B / self.K), :, :, :]
+        k_block = k[b_idx * int(N / self.K):(b_idx + 1) * int(N / self.K), :, :, :]
+        v_block = v[:, :, b_idx * int(N / self.K):(b_idx + 1) * int(N / self.K), :]
 
-        scaled_norm = -self.scale * torch.square(torch.cdist(q_block.transpose(0, 2), k_block.transpose(0, 2), p=2.0)).permute(2,3,1,0)
+        scaled_norm = -self.scale * torch.square(torch.cdist(q.transpose(0, 2), k_block.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         attn = torch.exp(scaled_norm - torch.logsumexp(scaled_norm, dim=1, keepdim=True))
         attn = attn.permute(2, 3, 0, 1)
         attn = self.attn_drop(attn)
 
-        x = (attn @ v_block).transpose(1, 2).reshape(B // self.K, N, C)
+        x = (attn @ v_block).transpose(1, 2).reshape(B, N, C)
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
@@ -657,11 +654,11 @@ class MomAttention(nn.Module):
 class MomBlock(nn.Module):
     def __init__(
             self, dim, num_heads, mlp_ratio=4., qkv_bias=False, drop=0., attn_drop=0., init_values=None,
-            drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, outlier_fraction=.05):
+            drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, outlier_fraction=.05, num_blocks=3):
         super().__init__()
         self.norm1 = norm_layer(dim)
         self.attn = MomAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, attn_drop=attn_drop, proj_drop=drop,
-                                 outlier_fraction=outlier_fraction, K=3)
+                                 outlier_fraction=outlier_fraction, K=num_blocks)
         self.ls1 = LayerScale(dim, init_values=init_values) if init_values else nn.Identity()
         self.drop_path1 = DropPath(drop_path) if drop_path > 0. else nn.Identity()
 
@@ -686,7 +683,7 @@ class MomVisionTransformer(VisionTransformer):
             embed_dim=768, depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, init_values=None,
             class_token=True, no_embed_class=False, fc_norm=None, drop_rate=0., attn_drop_rate=0., drop_path_rate=0.,
             weight_init='', embed_layer=PatchEmbed, norm_layer=None, act_layer=None, block_fn=MomBlock,
-            outlier_fraction=.05):
+            outlier_fraction=.05, num_blocks=3):
         """
         Args:
             img_size (int, tuple): input image size
@@ -738,7 +735,7 @@ class MomVisionTransformer(VisionTransformer):
             block_fn(
                 dim=embed_dim, num_heads=num_heads, mlp_ratio=mlp_ratio, qkv_bias=qkv_bias, init_values=init_values,
                 drop=drop_rate, attn_drop=attn_drop_rate, drop_path=dpr[i], norm_layer=norm_layer, act_layer=act_layer,
-                outlier_fraction=outlier_fraction)
+                outlier_fraction=outlier_fraction, num_blocks=num_blocks)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim) if not use_fc_norm else nn.Identity()
 
@@ -944,6 +941,7 @@ def deit_kde_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['loss_type']
     del kwargs['num_iter']
     del kwargs['outlier_fraction']
+    del kwargs['num_blocks']
     model = KdeTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
@@ -963,6 +961,7 @@ def deit_rvt_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['loss_type']
     del kwargs['num_iter']
     del kwargs['outlier_fraction']
+    del kwargs['num_blocks']
     model = RvtTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
@@ -979,6 +978,7 @@ def deit_rvt_tiny_patch16_224(pretrained=False, **kwargs):
 def deit_robust_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['pretrained_cfg']
     del kwargs['outlier_fraction']
+    del kwargs['num_blocks']
     model = RobustVisionTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
@@ -997,6 +997,7 @@ def deit_spkde_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['huber_a']
     del kwargs['loss_type']
     del kwargs['num_iter']
+    del kwargs['num_blocks']
     model = SPKDEVisionTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
@@ -1031,6 +1032,7 @@ def deit_mom_tiny_patch16_224(pretrained=False, **kwargs):
 def deit_tiny_patch16_224(pretrained=False, **kwargs):
     del kwargs['pretrained_cfg']
     del kwargs['huber_a']
+    del kwargs['num_blocks']
     model = VisionTransformer(
         patch_size=16, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4, qkv_bias=True,
         norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
