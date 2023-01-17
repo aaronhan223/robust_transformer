@@ -139,3 +139,17 @@ files/
 kde_files/
 robust_files/
 attack/
+files_baseline/
+files_hampel/
+files_kde/
+files_mom_test/
+files_robust/
+files_robust_0.1/
+files_robust_0.2/
+files_robust_0.4/
+files_robust_0.6/
+files_robust_0.59/
+files_robust_1.0/
+files_robust_1.4/
+files_robust_iter_2/
+files_robust_test/
