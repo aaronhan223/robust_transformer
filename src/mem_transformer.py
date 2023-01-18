@@ -505,6 +505,112 @@ class RBFMultiHeadAttn(nn.Module):
 
         return output
 
+
+class MomMultiHeadAttn(nn.Module):
+    def __init__(self, n_head, d_model, d_head, dropout, dropatt=0, K=3,
+                 pre_lnorm=False):
+        super(MomMultiHeadAttn, self).__init__()
+
+        self.n_head = n_head
+        self.d_model = d_model
+        self.d_head = d_head
+        self.dropout = dropout
+
+        self.q_net = nn.Linear(d_model, n_head * d_head, bias=False)
+        self.kv_net = nn.Linear(d_model, 2 * n_head * d_head, bias=False)
+
+        self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
+        self.o_net = nn.Linear(n_head * d_head, d_model, bias=False)
+
+        self.layer_norm = nn.LayerNorm(d_model)
+
+        self.scale = 1 / (d_head ** 0.5)
+
+        self.pre_lnorm = pre_lnorm
+        self.K = K
+
+    def divide_batch(self, N):
+        init_size = [N // self.K for _ in range(self.K)]
+        density = np.ones(N) / N
+        all_indices = np.arange(N)
+        indices = []
+        for i in range(self.K):
+            idx = np.random.choice(a=all_indices, size=init_size[i], replace=False, p=density)
+            indices.append(np.sort(idx))
+            if i == self.K - 1:
+                break
+            density[idx] = 0
+            nonzero = density > 0
+            density[nonzero] = 1 / np.sum(nonzero)
+        return indices
+
+    def forward(self, h, attn_mask=None, mems=None,
+                carry_over_fast_weight=False):
+        assert not carry_over_fast_weight, "Not supported."
+        # multihead attention
+        # [hlen x bsz x n_head x d_head]
+
+        if mems is not None:
+            c = torch.cat([mems, h], 0)
+        else:
+            c = h
+
+        if self.pre_lnorm:
+            # layer normalization
+            c = self.layer_norm(c)
+
+        head_q = self.q_net(h)
+        # divide the output into 2 parts, which are k and v
+        head_k, head_v = torch.chunk(self.kv_net(c), 2, -1)
+
+        head_q = head_q.view(h.size(0), h.size(1), self.n_head, self.d_head)
+        head_k = head_k.view(c.size(0), c.size(1), self.n_head, self.d_head)
+        head_v = head_v.view(c.size(0), c.size(1), self.n_head, self.d_head)
+
+        # normalize k to prevent unbounded distance
+        head_k = F.normalize(head_k, dim=3)
+
+        if N // self.K > 1:
+            likelihood = []
+            N = head_k.shape[0]
+            indices = self.divide_batch(N)
+            with torch.no_grad():
+                for n in range(self.K):
+                    k_b = head_k[indices[n], :, :, :]
+                    llh = -self.scale * torch.square(
+                        torch.cdist(head_q.transpose(0, 2), k_b.transpose(0, 2), p=2.0)).permute(3,2,1,0)
+                    likelihood.append(torch.sum(llh).cpu().detach().numpy())
+            b_idx = np.argsort(likelihood)[len(likelihood) // 2]
+            head_k = head_k[indices[b_idx], :, :, :]
+            head_v = head_v[indices[b_idx], :, :, :]
+            attn_mask = attn_mask[indices[b_idx], :, :]
+
+        diff_norm = torch.square(torch.cdist(head_q.transpose(0, 2), head_k.transpose(0, 2), p=2.0)).permute(3,2,1,0)
+        if attn_mask is not None and attn_mask.any().item():
+            diff_norm.masked_fill_(attn_mask[:,:,:,None], float('inf'))
+        scaled_norm = -self.scale * diff_norm
+        attn_prob = torch.exp(scaled_norm - torch.logsumexp(scaled_norm, dim=1, keepdim=True))
+        attn_prob = self.dropatt(attn_prob)
+
+        attn_vec = torch.einsum('jibn,jbnd->ibnd', (attn_prob, head_v))
+        attn_vec = attn_vec.contiguous().view(
+            attn_vec.size(0), attn_vec.size(1), self.n_head * self.d_head)
+
+        # linear projection
+        attn_out = self.o_net(attn_vec)
+        attn_out = self.drop(attn_out)
+
+        if self.pre_lnorm:
+            # residual connection
+            output = h + attn_out
+        else:
+            # residual connection + layer normalization
+            output = self.layer_norm(h + attn_out)
+
+        return output
+
+
 # Linear multihead attention from Katharopoulos et al.
 # Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention
 # https://arxiv.org/abs/2006.16236
@@ -1662,7 +1768,7 @@ class PerformerDecoderLayer(nn.Module):
 
 class DecoderLayer(nn.Module):
     def __init__(self, n_head, d_model, d_head, d_inner, dropout, attn_type, huber_a=0.2, loss_type='huber',
-                 update_mode = 'rbf2keys', scale_w = 1., **kwargs):
+                 update_mode = 'rbf2keys', scale_w = 1., num_blocks=3, **kwargs):
         super(DecoderLayer, self).__init__()
 
         if attn_type == 2:
@@ -1675,6 +1781,8 @@ class DecoderLayer(nn.Module):
             attn_func = KNNMultiHeadAttn
         elif attn_type == 9:
             attn_func = RBFMultiHeadAttn
+        elif attn_type == 11:
+            attn_func = MomMultiHeadAttn
         elif attn_type == 14:
             attn_func = StepWiseLinearTransformerLayer
         elif attn_type == 16:
@@ -1703,6 +1811,8 @@ class DecoderLayer(nn.Module):
         if attn_type in [400, 500]:
             self.dec_attn = attn_func(n_head, d_model, d_head, dropout, 
             update_mode = update_mode, scale_w = scale_w, **kwargs)
+        elif attn_type == 11:
+            self.dec_attn = attn_func(n_head, d_model, d_head, dropout, K=num_blocks, **kwargs)
         elif attn_type == 9:
             self.dec_attn = attn_func(n_head, d_model, d_head, dropout, huber_a, loss_type, **kwargs)
         else:
@@ -1845,6 +1955,7 @@ class MemTransformerLM(nn.Module):
                  dropatt,
                  huber_a=0.2,
                  loss_type='huber',
+                 num_blocks=3,
                  tie_weight=True,
                  d_embed=None,
                  div_val=1,
@@ -1909,18 +2020,20 @@ class MemTransformerLM(nn.Module):
                         tgt_len=tgt_len, ext_len=ext_len, mem_len=mem_len,
                         dropatt=dropatt, pre_lnorm=pre_lnorm)
                 )
-        elif attn_type in [2, 3, 4, 8, 9]:  # absolute embeddings
+        elif attn_type in [2, 3, 4, 8, 9, 11]:  # absolute embeddings
             # 2: baseline vanilla transformer
             # 3:
             # 4: linear transformer
             # 8: Transformer-KDE
             # 9: Transformer-RKDE
+            # 11: MOM-KDE
             for i in range(n_layer):
                 self.layers.append(
                     DecoderLayer(
                         n_head, d_model, d_head, d_inner, dropout,
                         dropatt=dropatt, pre_lnorm=pre_lnorm,
-                        attn_type=attn_type, huber_a=huber_a, loss_type=loss_type)
+                        attn_type=attn_type, huber_a=huber_a, loss_type=loss_type,
+                        num_blocks=num_blocks)
                 )
         
         elif attn_type in [200,]:  # absolute embeddings
@@ -2028,7 +2141,7 @@ class MemTransformerLM(nn.Module):
                     self.n_layer, self.max_klen, self.n_head))
 
         elif self.attn_type in [2, 4, 5, 6, 7, 8, 9,
-                                10, 14, 16,
+                                10, 11, 14, 16,
                                 24, 25, 26,
                                 34, 35,
                                 44, 45, 46, 200, 300, 400, 500]:
@@ -2142,7 +2255,7 @@ class MemTransformerLM(nn.Module):
                     dec_attn_mask=dec_attn_mask, mems=mems_i)
                 hids.append(core_out)
 
-        elif self.attn_type in [2, 4, 5, 6, 7, 8, 9, 10, 14, 16, 200]:  # absolute
+        elif self.attn_type in [2, 4, 5, 6, 7, 8, 9, 10, 11, 14, 16, 200]:  # absolute
             if self.no_pos:
                 core_out = self.drop(word_emb)
             else:
