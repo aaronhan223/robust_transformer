@@ -616,6 +616,21 @@ class MomAttention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
         self.K = K
 
+    def divide_batch(self, N):
+        init_size = [N // self.K for _ in range(self.K)]
+        density = np.ones(N) / N
+        all_indices = np.arange(N)
+        indices = []
+        for i in range(self.K):
+            idx = np.random.choice(a=all_indices, size=init_size[i], replace=False, p=density)
+            indices.append(np.sort(idx))
+            if i == self.K - 1:
+                break
+            density[idx] = 0
+            nonzero = density > 0
+            density[nonzero] = 1 / np.sum(nonzero)
+        return indices
+
     def forward(self, x):
         B, N, C = x.shape
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
@@ -628,17 +643,17 @@ class MomAttention(nn.Module):
         k = F.normalize(k, dim=-1)
 
         # this part is only for selecting the median batch, so can be without gradient
+        indices = self.divide_batch(N)
         likelihood = []
         with torch.no_grad():
             for n in range(self.K):
-                k_b = k[n * int(N / self.K):(n + 1) * int(N / self.K), :, :, :]
+                k_b = k[indices[n], :, :, :]
                 scaled_norm_block = -self.scale * torch.square(torch.cdist(
                     q.transpose(0, 2), k_b.transpose(0, 2), p=2.0)).permute(2,3,1,0)
                 likelihood.append(torch.sum(scaled_norm_block).cpu().detach().numpy())
-
         b_idx = np.argsort(likelihood)[len(likelihood) // 2]
-        k_block = k[b_idx * int(N / self.K):(b_idx + 1) * int(N / self.K), :, :, :]
-        v_block = v[:, :, b_idx * int(N / self.K):(b_idx + 1) * int(N / self.K), :]
+        k_block = k[indices[b_idx], :, :, :]
+        v_block = v[:, :, indices[b_idx], :]
 
         scaled_norm = -self.scale * torch.square(torch.cdist(q.transpose(0, 2), k_block.transpose(0, 2), p=2.0)).permute(2,3,1,0)
         attn = torch.exp(scaled_norm - torch.logsumexp(scaled_norm, dim=1, keepdim=True))
