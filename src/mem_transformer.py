@@ -570,10 +570,10 @@ class MomMultiHeadAttn(nn.Module):
 
         # normalize k to prevent unbounded distance
         head_k = F.normalize(head_k, dim=3)
-
+        N = head_k.shape[0]
+        
         if N // self.K > 1:
             likelihood = []
-            N = head_k.shape[0]
             indices = self.divide_batch(N)
             with torch.no_grad():
                 for n in range(self.K):
