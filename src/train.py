@@ -168,7 +168,7 @@ parser.add_argument('--project_name', type=str, default=None,
                     help='project name for wandb.')
 parser.add_argument('--job_name', type=str, default=None,
                     help='job name for wandb.')
-parser.add_argument('--use_wandb', action='store_true',
+parser.add_argument('--use_wandb', type=int, default=1,
                     help='use wandb.')
 parser.add_argument('--update_mode', type=str, default='hard',
                     help='hard, soft, rbf')
