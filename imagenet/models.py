@@ -617,7 +617,8 @@ class MomAttention(nn.Module):
         self.K = K
 
     def divide_batch(self, N):
-        init_size = [N // self.K for _ in range(self.K)]
+        # init_size = [N // self.K for _ in range(self.K)]
+        init_size = [int(N * (1 - self.outlier)) for _ in range(self.K)]
         density = np.ones(N) / N
         all_indices = np.arange(N)
         indices = []
@@ -626,9 +627,9 @@ class MomAttention(nn.Module):
             indices.append(np.sort(idx))
             if i == self.K - 1:
                 break
-            density[idx] = 0
-            nonzero = density > 0
-            density[nonzero] = 1 / np.sum(nonzero)
+            # density[idx] = 0
+            # nonzero = density > 0
+            # density[nonzero] = 1 / np.sum(nonzero)
         return indices
 
     def forward(self, x):

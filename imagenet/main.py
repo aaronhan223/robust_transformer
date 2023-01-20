@@ -34,7 +34,7 @@ def get_args_parser():
     parser.add_argument('--huber_a', default=0.2, type=float)
     parser.add_argument('--loss_type', default='huber', type=str)
     parser.add_argument('--num_iter_kirwls', default=1, type=int)
-    parser.add_argument('--outlier_fraction', default=0.05, type=float)
+    parser.add_argument('--outlier_fraction', default=0.1, type=float)
     parser.add_argument('--num_blocks', default=5, type=int)
 
     # Model parameters
