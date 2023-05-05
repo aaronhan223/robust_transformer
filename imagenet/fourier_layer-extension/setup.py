@@ -9,12 +9,12 @@ setup(name='fourier_layer_cpp',
 
 
 # ext = Extension(
-   # name='fourier_layer_cpp',
-   # sources=['fourier_layer.cpp'],
-   # include_dirs=cpp_extension.include_paths(),
-   # extra_compile_args=['-fopenmp'],
-   # extra_link_args=['-lgomp'],
-   # language='c++')
+#    name='fourier_layer_cpp',
+#    sources=['fourier_layer.cpp'],
+#    include_dirs=cpp_extension.include_paths(),
+#    extra_compile_args=['-fopenmp'],
+#    extra_link_args=['-lgomp'],
+#    language='c++')
 
 
 

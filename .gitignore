@@ -132,6 +132,7 @@ dmypy.json
 .idea
 .vscode
 .DS_Store
+.pth
 
 # wandb related
 wandb/
@@ -142,6 +143,8 @@ attack/
 files_baseline/
 files_hampel/
 files_kde/
+files_rvt/
+robust_benckmark/
 files_mom_test/
 files_robust/
 files_robust_0.1/
