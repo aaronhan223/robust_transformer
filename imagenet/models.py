@@ -1063,6 +1063,7 @@ class MomFourierVisionTransformer(VisionTransformer):
                 outlier_fraction=outlier_fraction, num_blocks=num_blocks)
             for i in range(depth)])
         self.norm = norm_layer(embed_dim)
+        self.norm_pre = nn.Identity()
 
         # Representation layer
         if representation_size and not distilled:
